@@ -1,0 +1,97 @@
+name: Agentic Automation Workflow - E2E Demo
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  agentic-demo:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'adopt'
+
+    - name: Cache Maven packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Install Python dependencies
+      working-directory: agent-service
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Generate features and pages (RAG)
+      working-directory: agent-service
+      run: |
+        python agent_service/run_flow_demo.py \
+          --module github_actions_demo \
+          --requirement "As a user I want to log in with username and password so I can access my inventory"
+
+    - name: Display generated files
+      run: |
+        echo "=== Generated Feature Files ==="
+        find src/test/resources/features/github_actions_demo -name "*.feature" -exec cat {} \;
+        echo ""
+        echo "=== Generated Page Objects ==="
+        find src/main/java/org/example/pages/github_actions_demo -name "*.java" -exec cat {} \;
+
+    - name: Run Maven tests
+      run: mvn clean verify -X
+
+    - name: Generate Allure Report
+      if: always()
+      run: mvn allure:report
+
+    - name: Upload Allure Report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: allure-report
+        path: target/allure-report/
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: |
+          target/surefire-reports/
+          target/cucumber-reports/
+
+    - name: Publish test report
+      if: always()
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      with:
+        files: target/surefire-reports/**/*.xml
+        check_name: Test Results
+
+    - name: Display test summary
+      if: always()
+      run: |
+        echo "=== Test Execution Summary ==="
+        ls -la target/allure-report/ 2>/dev/null || echo "No Allure report"
+        ls -la target/cucumber-reports/ 2>/dev/null || echo "No Cucumber HTML report"
+        echo ""
+        echo "Artifacts uploaded:"
+        echo "  - allure-report"
+        echo "  - test-results"
+
