@@ -1,0 +1,90 @@
+name: E2E Test Automation with Allure Reports
+
+on:
+  push:
+    branches: [ main, develop, master ]
+  pull_request:
+    branches: [ main, develop, master]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        java-version: [ 11 ]
+
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Setup Java
+      - name: Setup Java ${{ matrix.java-version }}
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      # Step 3: Setup Python (for RAG service)
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      # Step 4: Cache Maven dependencies
+      - name: Cache Maven packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      # Step 5: Run tests
+      - name: Run all tests (125 tests)
+        run: mvn clean verify -DskipTests=false
+        continue-on-error: true
+
+      # Step 6: Generate Allure report
+      - name: Generate Allure Report
+        run: mvn allure:report -q
+        if: always()
+
+      # Step 7: Upload test results to GitHub
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: allure-report
+          path: target/allure-report/
+          retention-days: 30
+
+      # Step 8: Upload test results JSON
+      - name: Upload test results JSON
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: allure-results
+          path: target/allure-results/
+          retention-days: 30
+
+      # Step 9: Publish results to GitHub Pages (optional)
+      - name: Deploy Allure Report to GitHub Pages
+        if: always()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/allure-report/
+
+      # Step 10: Test Summary
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "✅ Test Execution Complete"
+          echo "📊 Report available in Artifacts"
+          echo "📈 GitHub Pages: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+
