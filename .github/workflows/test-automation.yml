@@ -44,18 +44,95 @@ jobs:
           key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-m2
 
-      # Step 5: Run tests
-      - name: Run all tests (125 tests)
+      # Step 5: Restore Allure history from GitHub Pages for trend graphs
+      - name: Get Allure history from GitHub Pages
+        uses: actions/checkout@v4
+        if: always()
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Copy Allure history for trend graphs
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p target/allure-results
+          if [ -d "gh-pages/history" ]; then
+            cp -r gh-pages/history target/allure-results/history
+            echo "✅ Allure history restored for trend graphs"
+          else
+            echo "ℹ️ No previous Allure history found - this may be the first run"
+          fi
+
+      # Step 6: Run tests
+      - name: Run all tests
         run: mvn clean verify -DskipTests=false
         continue-on-error: true
 
-      # Step 6: Generate Allure report
+      # Step 7: Generate Allure report
       - name: Generate Allure Report
         run: mvn allure:report -q
         if: always()
 
-      # Step 7: Upload test results to GitHub
-      - name: Upload test results
+      # Step 8: Publish inline test results as a GitHub Check (visible on PRs and commits)
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: target/surefire-reports/**/*.xml
+          check_name: "Cucumber Test Results"
+          comment_mode: always
+
+      # Step 9: Write summary directly to GitHub Actions job summary page
+      - name: Write Test Summary to Job Summary
+        if: always()
+        run: |
+          echo "## 🧪 Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "target/allure-results/cucumber.json" ]; then
+            python3 - << 'EOF' >> $GITHUB_STEP_SUMMARY
+          import json
+
+          try:
+              with open("target/allure-results/cucumber.json") as f:
+                  data = json.load(f)
+              passed = failed = skipped = 0
+              for feature in data:
+                  for scenario in feature.get("elements", []):
+                      steps = scenario.get("steps", [])
+                      statuses = [s.get("result", {}).get("status", "skipped") for s in steps if steps]
+                      if not steps:
+                          skipped += 1
+                      elif "failed" in statuses:
+                          failed += 1
+                      elif all(s == "passed" for s in statuses):
+                          passed += 1
+                      else:
+                          skipped += 1
+              total = passed + failed + skipped
+              print("| Status | Count |")
+              print("| --- | --- |")
+              print(f"| ✅ Passed | {passed} |")
+              print(f"| ❌ Failed | {failed} |")
+              print(f"| ⏭️ Skipped | {skipped} |")
+              print(f"| 📊 **Total** | **{total}** |")
+          except Exception as e:
+              print(f"| ⚠️ Could not parse results | {e} |")
+          EOF
+          else
+            echo "⚠️ No Cucumber JSON results found at \`target/allure-results/cucumber.json\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Reports" >> $GITHUB_STEP_SUMMARY
+          echo "- 🌐 **Full Allure Report (GitHub Pages):** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 **Allure Report Artifact:** Download from the *Artifacts* section below" >> $GITHUB_STEP_SUMMARY
+          echo "- 📈 **History & Trends:** Preserved across runs via GitHub Pages" >> $GITHUB_STEP_SUMMARY
+
+      # Step 10: Upload Allure HTML report artifact
+      - name: Upload Allure Report
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -63,8 +140,8 @@ jobs:
           path: target/allure-report/
           retention-days: 30
 
-      # Step 8: Upload test results JSON
-      - name: Upload test results JSON
+      # Step 11: Upload Allure raw results artifact
+      - name: Upload Allure Results
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -72,19 +149,21 @@ jobs:
           path: target/allure-results/
           retention-days: 30
 
-      # Step 9: Publish results to GitHub Pages (optional)
-      - name: Deploy Allure Report to GitHub Pages
+      # Step 12: Upload Cucumber HTML report artifact
+      - name: Upload Cucumber HTML Report
+        uses: actions/upload-artifact@v4
         if: always()
+        with:
+          name: cucumber-html-report
+          path: target/cucumber-reports/
+          retention-days: 30
+
+      # Step 13: Deploy Allure Report to GitHub Pages (with history for trend graphs)
+      - name: Deploy Allure Report to GitHub Pages
+        if: contains(fromJSON('["refs/heads/main","refs/heads/master","refs/heads/develop"]'), github.ref)
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: target/allure-report/
-
-      # Step 10: Test Summary
-      - name: Test Summary
-        if: always()
-        run: |
-          echo "✅ Test Execution Complete"
-          echo "📊 Report available in Artifacts"
-          echo "📈 GitHub Pages: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          keep_files: false
 
